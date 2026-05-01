@@ -368,169 +368,31 @@ var map = L.map('map', {
   layers: [esriSat]
 });
 
-// ================= LST RASTER =================
-
-fetch("PH_LST_Annual_Stack.tif")
-  .then(res => res.arrayBuffer())
-  .then(arrayBuffer => parseGeoraster(arrayBuffer))
-  .then(georaster => {
-
-    lstRaster = georaster; // ✅ STORE THIS
-
-    lstLayer = new GeoRasterLayer({
-      georaster: georaster,
-      opacity: 0.7,
-      resolution: 128,
-      pixelValuesToColorFn: function(values) {
-        let v = values[0];
-        if (v === 0 || v === -9999 || v == null) return null;
-        if (v < 2600) return "#2c7bb6";
-        if (v < 3000) return "#abd9e9";
-        if (v < 3300) return "#fdae61";
-        return "#d7191c";
-      }
-    });
-
-    layers["LST"] = lstLayer;
-
-    lstLoaded = true;
-    checkIfReady();
-// 🔥 REBUILD LAYER CONTROL AFTER LST LOADS
-createLayerControl();
-    
-  })
-  .catch(err => console.error("LST load error:", err));
-
-// RAINFALL RASTER
-
-fetch("PH_Rainfall_Annual_Stack.tif")
-  .then(res => res.arrayBuffer())
-  .then(arrayBuffer => parseGeoraster(arrayBuffer))
-  .then(georaster => {
-
-    rainfallRaster = georaster;
-
-    rainfallLayer = new GeoRasterLayer({
-      georaster: georaster,
-      opacity: 0.7,
-      resolution: 128,
-      pixelValuesToColorFn: function(values) {
-
-        let v = values[0];
-        if (v === 0 || v === -9999 || v == null) return null;
-
-        // 🔥 Adjust these thresholds depending on your dataset
-        if (v < 1000) return "#f7fbff";   // low
-        if (v < 2000) return "#6baed6";   // moderate
-        if (v < 3000) return "#2171b5";   // high
-        return "#08306b";                 // very high
-      }
-    });
-
-    layers["Rainfall"] = rainfallLayer;
-
-    rainfallLoaded = true;
-    checkIfReady();
-
-    createLayerControl();
-
-  })
-  .catch(err => console.error("Rainfall load error:", err));
-
-// SLOPE RASTER FETCH
-// ================= SLOPE RASTER =================
-fetch("PH_Slope_Class2.tif")
-  .then(res => res.arrayBuffer())
-  .then(arrayBuffer => parseGeoraster(arrayBuffer))
-  .then(georaster => {
-
-    slopeRaster = georaster;
-
-    slopeLayer = new GeoRasterLayer({
-      georaster: georaster,
-      opacity: 0.7,
-      resolution: 128,
-
-      pixelValuesToColorFn: function(values) {
-
-        let v = values[0];
-
-        // ✅ clean raster → minimal filtering
-        if (v == null) return null;
-
-        if (v === 1) return "#1a9850"; // <3°
-        if (v === 2) return "#66bd63"; // 3–8°
-        if (v === 3) return "#d9ef8b"; // 8–18°
-        if (v === 4) return "#fee08b"; // 18–30°
-        if (v === 5) return "#f46d43"; // 30–50°
-        if (v === 6) return "#d73027"; // >50°
-
-        return null;
-      }
-    });
-
-    layers["Slope"] = slopeLayer;
-
-    slopeLoaded = true;
-    checkIfReady();
-    createLayerControl();
-
-  })
-  .catch(err => console.error("Slope load error:", err));
-
 // ================= GLOBAL =================
-var slopeRaster = null;
-var slopeLayer = null;
-var slopeLoaded = false;
-var lstRaster = null;
-var rainfallRaster = null;
-var rainfallLayer = null;
-var rainfallLoaded = false;
 var layers = {};
 var labels = {};
-var marker = null;
-var lines = [];
-var highlightLayer = null;
-var visibleLayers = {
-  Municipal: true
-};
-var hasZoomed = false; // 🔥 add this
-var lstLayer = null; // 🔥 ADD THIS
-var layerControl = null;
-// ================= DRAWING =================
-var drawnItems = new L.FeatureGroup();
-map.addLayer(drawnItems);
-
-var drawControl = new L.Control.Draw({
-  edit: {
-    featureGroup: drawnItems
-  },
-  draw: false // we trigger manually
-});
-map.addControl(drawControl);
-
-var currentDrawer = null;
-
-map.on(L.Draw.Event.CREATED, function (e) {
-  var layer = e.layer;
-  drawnItems.addLayer(layer);
-});
-
-// ================= LOAD =================
 var loadCount = 0;
-var totalLayers = 7; // update if you add more
-var lstLoaded = false;
+var totalLayers = 6; // 🔥 barangay removed from initial load
+var layerControl = null;
 
+var lstLoaded = false;
+var rainfallLoaded = false;
+var slopeLoaded = false;
+
+// ================= SAFE LOAD FUNCTION =================
 function load(name,file,style,labelField,labelClass){
 
+  console.log("Loading:", name);
+
   fetch(file)
-    .then(r=>r.json())
-    .then(data=>{
+    .then(r => {
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(data => {
 
       var layer = L.geoJSON(data,{
-        style: function(feature){
-          return (typeof style === "function") ? style(feature) : style;
-        },
+        style: (typeof style === "function") ? style : () => style,
         onEachFeature:function(f,l){
 
           if(labelField){
@@ -549,36 +411,108 @@ function load(name,file,style,labelField,labelClass){
         }
       });
 
-      layers[name]=layer;
-
-      // 🔥 increment counter
+      layers[name] = layer;
       loadCount++;
 
-   if(loadCount === totalLayers){
-  createLayerControl();
-  checkIfReady();
-}
+      if(loadCount === totalLayers){
+        createLayerControl();
+        checkIfReady();
+      }
 
-      if(name==="Municipal"){
+      if(name === "Municipal"){
         map.fitBounds(layer.getBounds());
       }
+
+    })
+    .catch(err=>{
+      console.error("FAILED:", name, err);
+      loadCount++; // 🔥 prevent loader freeze
     });
 }
 
+// ================= CHECK READY =================
 function checkIfReady(){
-
   if(loadCount === totalLayers && lstLoaded && rainfallLoaded && slopeLoaded){
-
-    // hide loader
     document.getElementById("loader").style.display = "none";
-
   }
 }
-// ================= LAYER CONTROL FUNCTION =================
+
+// ================= RASTERS =================
+
+// LST
+fetch("PH_LST_Annual_Stack.tif")
+.then(r=>r.arrayBuffer())
+.then(parseGeoraster)
+.then(gr=>{
+  lstLoaded = true;
+  checkIfReady();
+});
+
+// Rainfall
+fetch("PH_Rainfall_Annual_Stack.tif")
+.then(r=>r.arrayBuffer())
+.then(parseGeoraster)
+.then(gr=>{
+  rainfallLoaded = true;
+  checkIfReady();
+});
+
+// Slope
+fetch("PH_Slope_Class2.tif")
+.then(r=>r.arrayBuffer())
+.then(parseGeoraster)
+.then(gr=>{
+  slopeLoaded = true;
+  checkIfReady();
+});
+
+// ================= LOAD VECTOR FILES =================
+load("Regional","regionalboundaries.geojson",{color:"yellow",weight:1.5},"ADM1_EN","label");
+
+load("Municipal","municipalboundaries.geojson",{
+  color:"#ffffff",
+  weight:0.75,
+  fill:false
+},"ADM3_EN","label-municipal");
+
+load("KBA","kbamap.geojson",{color:"green",weight:1,fillOpacity:0.3});
+load("Protected","enipasareas.geojson",{color:"red",weight:1,fillOpacity:0.2});
+load("Fault","faultlines.geojson",{color:"red",weight:2,dashArray:"6,6"});
+
+load("GeoStability","geologicstability2.geojson",function(feature){
+  var cls = (feature.properties.geo_class || "").toUpperCase();
+
+  if(cls==="STABLE") return {color:"#27ae60",fillColor:"#2ecc71",fillOpacity:0.5};
+  if(cls==="MODERATE") return {color:"#f39c12",fillColor:"#f1c40f",fillOpacity:0.5};
+  if(cls==="UNSTABLE") return {color:"#c0392b",fillColor:"#e74c3c",fillOpacity:0.6};
+  if(cls==="WATER") return {color:"#2980b9",fillColor:"#3498db",fillOpacity:0.5};
+
+  return {color:"#7f8c8d",fillColor:"#bdc3c7",fillOpacity:0.3};
+});
+
+// ================= LAZY LOAD BARANGAY =================
+var barangayLoaded = false;
+
+map.on('zoomend', function(){
+
+  if(map.getZoom() > 10 && !barangayLoaded){
+
+    barangayLoaded = true;
+
+    console.log("Loading Barangay (lazy)");
+
+    load(
+      "Barangay",
+      "https://github.com/geeameal/ngass_webgis/releases/download/v1/barangayboundaries.geojson",
+      {color:"#666",weight:0.75}
+    );
+  }
+});
+
+// ================= LAYER CONTROL =================
 function createLayerControl(){
 
-  // 🔥 REMOVE old control if it exists
-  if (layerControl) {
+  if(layerControl){
     map.removeControl(layerControl);
   }
 
@@ -588,23 +522,13 @@ function createLayerControl(){
     "Fault Lines": layers["Fault"],
     "Geologic Stability": layers["GeoStability"],
     "Regional": layers["Regional"],
-    "Municipal": layers["Municipal"],
-    "Barangay": layers["Barangay"]
+    "Municipal": layers["Municipal"]
   };
 
-  if (lstLayer) {
-    overlays["LST (Temperature)"] = lstLayer;
+  if(layers["Barangay"]){
+    overlays["Barangay"] = layers["Barangay"];
   }
 
-if (rainfallLayer) {
-  overlays["Rainfall"] = rainfallLayer;
-}
-
-if (slopeLayer) {
-  overlays["Slope"] = slopeLayer;
-}
-
-  // 🔥 SAVE reference
   layerControl = L.control.layers(
     {
       "🛰 Satellite": esriSat,
@@ -612,802 +536,8 @@ if (slopeLayer) {
       "🌍 Clean Map": carto
     },
     overlays,
-    { position:"topright", collapsed:false }
+    {collapsed:false}
   ).addTo(map);
-
-  createGeoLegend();
-  createLSTLegend();
-createRainfallLegend();
-createSlopeLegend();
-}
-
-var geoLegend; // 🔥 global reference
-
-function createGeoLegend(){
-
-  geoLegend = L.control({ position: "bottomright" });
-
-  geoLegend.onAdd = function () {
-
-    var div = L.DomUtil.create("div", "info legend");
-
-    div.innerHTML = `
-      <div style="
-        background: rgba(255,255,255,0.9);
-        padding:10px;
-        border-radius:8px;
-        box-shadow:0 2px 6px rgba(0,0,0,0.3);
-        font-size:12px;
-        line-height:1.4;
-      ">
-        <b>Geologic Stability</b><br><br>
-
-        
-        <i style="background:#f1c40f;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> Moderate<br>
-        <i style="background:#e74c3c;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> Unstable<br>
-        <i style="background:#3498db;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> Water
-      </div>
-    `;
-
-    return div;
-  };
-}
-// ================= LST LEGEND =================
-var lstLegend;
-
-function createLSTLegend(){
-
-  lstLegend = L.control({ position: "bottomright" });
-
-  lstLegend.onAdd = function () {
-
-    var div = L.DomUtil.create("div", "info legend");
-
-    div.innerHTML = `
-      <div style="
-        background: rgba(255,255,255,0.9);
-        padding:10px;
-        border-radius:8px;
-        box-shadow:0 2px 6px rgba(0,0,0,0.3);
-        font-size:12px;
-        line-height:1.4;
-      ">
-        <b>LST (°C)</b><br><br>
-
-        <i style="background:#2c7bb6;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> Cool (<26°C)<br>
-        <i style="background:#abd9e9;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> Mild (26–30°C)<br>
-        <i style="background:#fdae61;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> Warm (30–33°C)<br>
-        <i style="background:#d7191c;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> Hot (>33°C)
-      </div>
-    `;
-
-    return div;
-  };
-}
-// RAINFALLLEGEND
-
-var rainfallLegend;
-
-function createRainfallLegend(){
-
-  rainfallLegend = L.control({ position: "bottomright" });
-
-  rainfallLegend.onAdd = function () {
-
-    var div = L.DomUtil.create("div", "info legend");
-
-    div.innerHTML = `
-      <div style="
-        background: rgba(255,255,255,0.9);
-        padding:10px;
-        border-radius:8px;
-        box-shadow:0 2px 6px rgba(0,0,0,0.3);
-        font-size:12px;
-        line-height:1.4;
-      ">
-        <b>Rainfall (mm/year)</b><br><br>
-
-        <i style="background:#f7fbff;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> Low<br>
-        <i style="background:#6baed6;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> Moderate<br>
-        <i style="background:#2171b5;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> High<br>
-        <i style="background:#08306b;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> Very High
-      </div>
-    `;
-
-    return div;
-  };
-}
-
-
-// slope legend
-
-var slopeLegend;
-
-function createSlopeLegend(){
-
-  slopeLegend = L.control({ position: "bottomright" });
-
-  slopeLegend.onAdd = function () {
-
-    var div = L.DomUtil.create("div", "info legend");
-
-    div.innerHTML = `
-      <div style="
-        background: rgba(255,255,255,0.9);
-        padding:10px;
-        border-radius:8px;
-        box-shadow:0 2px 6px rgba(0,0,0,0.3);
-        font-size:12px;
-        line-height:1.4;
-      ">
-        <b>Slope (°)</b><br><br>
-
-        <i style="background:#1a9850;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> < 3°<br>
-        <i style="background:#66bd63;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> 3–8°<br>
-        <i style="background:#d9ef8b;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> 8–18°<br>
-        <i style="background:#fee08b;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> 18–30°<br>
-        <i style="background:#f46d43;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> 30–50°<br>
-        <i style="background:#d73027;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> > 50°
-      </div>
-    `;
-
-    return div;
-  };
-}
-// ================= LOAD FILES =================
-load("Regional","regionalboundaries.geojson",{color:"yellow",weight:1.5},"ADM1_EN","label");
-load("Municipal","municipalboundaries.geojson",{
-  color:"#ffffff",
-  weight:0.75,
-  fill:false
-},"ADM3_EN","label-municipal");
-load("Barangay","https://github.com/geeameal/ngass_webgis/releases/download/v1/barangayboundaries.geojson?raw=true",{color:"#666",weight:0.75});
-load("KBA","kbamap.geojson",{color:"green",weight:1,fillOpacity:0.3});
-load("Protected","enipasareas.geojson",{color:"red",weight:1,fillOpacity:0.2});
-load("Fault","faultlines.geojson",{
-  color:"red",
-  weight:2,
-  dashArray:"6,6"   // 🔥 dashed line
-});
-
-
-load("GeoStability","geologicstability2.geojson",function(feature){
-
-  var cls = (feature.properties.geo_class || "").toUpperCase();
-
-  switch(cls){
-
-    case "STABLE":
-      return {
-        color:"#27ae60",
-        fillColor:"#2ecc71",
-        weight:1,
-        fillOpacity:0.5
-      };
-
-    case "MODERATE":
-      return {
-        color:"#f39c12",
-        fillColor:"#f1c40f",
-        weight:1,
-        fillOpacity:0.5
-      };
-
-    case "UNSTABLE":
-      return {
-        color:"#c0392b",
-        fillColor:"#e74c3c",
-        weight:1,
-        fillOpacity:0.6
-      };
-
-    case "WATER":
-      return {
-        color:"#2980b9",
-        fillColor:"#3498db",
-        weight:1,
-        fillOpacity:0.5
-      };
-
-    default:
-      return {
-        color:"#7f8c8d",
-        fillColor:"#bdc3c7",
-        weight:1,
-        fillOpacity:0.3
-      };
-  }
-
-});
-
-// ================= LAYER CONTROL =================
-
-map.on('overlayadd', function(e){
-
-  // Municipal
-  if(e.name === "Municipal"){
-    visibleLayers.Municipal = true;
-    labels["Municipal"]?.addTo(map);
-  }
-
-  // 🔥 ADD THIS
-  if(e.name === "Regional"){
-    labels["Regional"]?.addTo(map);
-  }
-
-  // Geologic Stability legend
-  if(e.name === "Geologic Stability"){
-    geoLegend.addTo(map);
-  }
-
-if(e.name === "LST (Temperature)"){
-  lstLegend.addTo(map);
-}
-
-if(e.name === "Rainfall"){
-  rainfallLegend.addTo(map);
-}
-
-if(e.name === "Slope"){
-  slopeLegend.addTo(map);
-}
-
-});
-
-map.on('overlayremove', function(e){
-
-  // Municipal
-  if(e.name === "Municipal"){
-    visibleLayers.Municipal = false;
-    map.removeLayer(labels["Municipal"]);
-  }
-
-  // 🔥 ADD THIS
-  if(e.name === "Regional"){
-    map.removeLayer(labels["Regional"]);
-  }
-
-  // Geologic Stability legend
-  if(e.name === "Geologic Stability"){
-    map.removeControl(geoLegend);
-  }
-
-if(e.name === "LST (Temperature)"){
-  map.removeControl(lstLegend);
-}
-
-if(e.name === "Rainfall"){
-  map.removeControl(rainfallLegend);
-}
-
-if(e.name === "Slope"){
-  map.removeControl(slopeLegend);
-}
-
-});
-
-// ================= ZOOM =================
-function updateLayers(){
-  if(!hasZoomed) return; // 🔥 prevent loading on initial page load
-  var z = map.getZoom();
-
-  // 🔥 CLEAR ALL FIRST
-  ["Regional","Municipal","Barangay"].forEach(n=>{
-    layers[n] && map.removeLayer(layers[n]);
-    labels[n] && map.removeLayer(labels[n]);
-  });
-
-  // 🔥 USE REAL ZOOM LEVELS (bidirectional)
-  if(z <= 7){
-    layers["Regional"]?.addTo(map);
-    labels["Regional"]?.addTo(map);
-  }
-  else if(z > 7 && z <= 10){
-    layers["Municipal"]?.addTo(map);
-    labels["Municipal"]?.addTo(map);
-  }
-  else if(z > 10){
-    layers["Barangay"]?.addTo(map);
-labels["Barangay"]?.addTo(map);
-  }
-}
-map.on('zoomend', function(){
-  hasZoomed = true; // 🔥 mark first zoom
-  updateLayers();
-});
-
-// ================= CLICK =================
-map.on('click',function(e){
-
-  var lat=e.latlng.lat;
-  var lng=e.latlng.lng;
-
-  if(marker) map.removeLayer(marker);
-  marker=L.marker([lat,lng]).addTo(map);
-
-  assess(turf.point([lng,lat]));
-
-});
-
-// ================= LOCATE =================
-function locateUser(){
-  map.locate({
-    setView:true,
-    maxZoom:14,
-    enableHighAccuracy:true
-  });
-}
-
-map.on('locationfound', function(e){
-
-  var lat = e.latlng.lat;
-  var lng = e.latlng.lng;
-
-  if(marker) map.removeLayer(marker);
-  marker = L.marker([lat,lng]).addTo(map);
-
-  assess(turf.point([lng,lat]));
-});
-
-map.on('locationerror', function(){
-  alert("Location access denied.");
-});
-
-
-function startDrawLine(){
-  if(currentDrawer) currentDrawer.disable();
-
-  currentDrawer = new L.Draw.Polyline(map, {
-    shapeOptions: { color: 'yellow', weight: 3 }
-  });
-
-  currentDrawer.enable();
-}
-
-function startDrawPolygon(){
-  if(currentDrawer) currentDrawer.disable();
-
-  currentDrawer = new L.Draw.Polygon(map, {
-    shapeOptions: { color: 'orange', fillOpacity: 0.3 }
-  });
-
-  currentDrawer.enable();
-}
-
-function clearDrawings(){
-  drawnItems.clearLayers();
-}
-// ================= HELPERS =================
-function kbaName(p){
-  let name = p.KBA_NAME || "Unnamed";
-  let type = p.KBA_TYPE ? p.KBA_TYPE.replace("KBA","").trim() : "";
-  return type ? name + " (" + type + ")" : name;
-}
-function paName(p){
-  return (p.Name || "Unnamed") + " PA";
-}
-
-function faultName(p){
-  return p.Name || "Unnamed Fault";
-}
-
-// ================= MAIN =================
-function assess(point){
-
-  if(highlightLayer){
-    map.removeLayer(highlightLayer);
-  }
-  highlightLayer = L.layerGroup();
-
-  lines.forEach(l=>map.removeLayer(l));
-  lines=[];
-
-  var mun="N/A", prov="N/A", reg="N/A", brgy="N/A";
-  var kDist=Infinity, kLayer=null, kName="None";
-  var pDist=Infinity, pLayer=null, pName="None";
-var fDist=Infinity, fLayer=null, fName="None";
-var geoClass = "Unknown"; // 🔥 ADD THIS
-
-var lstValue = "No data";
-
-if (lstRaster) {
-
-  var lat = point.geometry.coordinates[1];
-  var lng = point.geometry.coordinates[0];
-
-  var result = geoblaze.identify(lstRaster, [lng, lat]);
-
-  if (result && result.length > 0 && result[0] !== null) {
-
-    var lst = result[9] / 100; // latest band
-    lstValue = lst.toFixed(2) + " °C";
-  }
-}
-
-var rainfallValue = "No data";
-
-if (rainfallRaster) {
-
-  var lat = point.geometry.coordinates[1];
-  var lng = point.geometry.coordinates[0];
-
-  var result = geoblaze.identify(rainfallRaster, [lng, lat]);
-
-  if (result && result.length > 0 && result[0] !== null) {
-
-    var rain = result[0]; // usually band 1
-    rainfallValue = rain.toFixed(0) + " mm/year";
-  }
-}
-
-var slopeValue = "No data";
-
-if (slopeRaster) {
-
-  var lat = point.geometry.coordinates[1];
-  var lng = point.geometry.coordinates[0];
-
-  var result = geoblaze.identify(slopeRaster, [lng, lat]);
-
-  if (result && result.length > 0 && result[0] !== null) {
-
-    var cls = result[0];
-
-    var slopeText = {
-      1: "<3° (Flat)",
-      2: "3–8° (Gentle)",
-      3: "8–18° (Moderate)",
-      4: "18–30° (Rolling)",
-      5: "30–50° (Steep)",
-      6: ">50° (Very Steep)"
-    };
-
-    slopeValue = slopeText[cls] || "Unknown";
-  }
-}
-
-  layers["Barangay"]?.eachLayer(l=>{
-    if(turf.booleanPointInPolygon(point,l.toGeoJSON())){
-      brgy=l.feature.properties.ADM4_EN;
-
-      L.geoJSON(l.toGeoJSON(),{
-        color:"#00ffff",
-        weight:3,
-        fillOpacity:0.1
-      }).addTo(highlightLayer).bringToFront();
-    }
-  });
-
-  layers["Municipal"]?.eachLayer(l=>{
-    if(turf.booleanPointInPolygon(point,l.toGeoJSON())){
-      mun=l.feature.properties.ADM3_EN;
-      prov=l.feature.properties.ADM2_EN;
-    }
-  });
-
-  layers["Regional"]?.eachLayer(l=>{
-    if(turf.booleanPointInPolygon(point,l.toGeoJSON())){
-      reg=l.feature.properties.ADM1_EN;
-    }
-  });
-
-layers["KBA"]?.eachLayer(l=>{
-
-  var geo = l.toGeoJSON();
-  var d = Infinity;
-
-  try {
-
-    // ✅ INSIDE CHECK FIRST
-    if(turf.booleanPointInPolygon(point, geo)){
-      d = 0;
-    } else {
-
-      // 🔥 handle MultiPolygon manually
-      var coordsArray = [];
-
-      if(geo.geometry.type === "Polygon"){
-        coordsArray = [geo.geometry.coordinates];
-      }
-      else if(geo.geometry.type === "MultiPolygon"){
-        coordsArray = geo.geometry.coordinates;
-      }
-      else {
-        return; // skip non-polygons
-      }
-
-      // 🔥 compute distance to ALL rings
-      coordsArray.forEach(polygon=>{
-        polygon.forEach(ring=>{
-          var line = turf.lineString(ring);
-          var dist = turf.pointToLineDistance(point, line, {units:'kilometers'});
-
-          if(dist < d){
-            d = dist;
-          }
-        });
-      });
-
-    }
-
-  } catch(err){
-    console.warn("KBA error:", err);
-    return;
-  }
-
-  if(d < kDist){
-    kDist = d;
-    kLayer = l;
-    kName = kbaName(l.feature.properties);
-  }
-
-});
-
-layers["Protected"]?.eachLayer(l=>{
-
-  var geo = l.toGeoJSON();
-  var d = Infinity;
-
-  try {
-
-    if(turf.booleanPointInPolygon(point, geo)){
-      d = 0;
-    } else {
-
-      var coordsArray = [];
-
-      if(geo.geometry.type === "Polygon"){
-        coordsArray = [geo.geometry.coordinates];
-      }
-      else if(geo.geometry.type === "MultiPolygon"){
-        coordsArray = geo.geometry.coordinates;
-      }
-      else {
-        return;
-      }
-
-      coordsArray.forEach(polygon=>{
-        polygon.forEach(ring=>{
-          var line = turf.lineString(ring);
-          var dist = turf.pointToLineDistance(point, line, {units:'kilometers'});
-
-          if(dist < d){
-            d = dist;
-          }
-        });
-      });
-
-    }
-
-  } catch(err){
-    console.warn("PA error:", err);
-    return;
-  }
-
-  if(d < pDist){
-    pDist = d;
-    pLayer = l;
-    pName = paName(l.feature.properties);
-  }
-
-});
-
-layers["Fault"]?.eachLayer(l=>{
-
-  try{
-    var geo = l.toGeoJSON();
-
-    // 🔥 handle MultiLineString properly
-    if(geo.geometry.type === "MultiLineString"){
-
-      geo.geometry.coordinates.forEach(coords=>{
-        var line = turf.lineString(coords);
-
-        var d = turf.pointToLineDistance(point, line, {units:'kilometers'});
-
-        if(d < fDist){
-          fDist = d;
-          fLayer = l;
-          fName = faultName(l.feature.properties);
-        }
-      });
-
-    } else if(geo.geometry.type === "LineString"){
-
-      var d = turf.pointToLineDistance(point, geo, {units:'kilometers'});
-
-      if(d < fDist){
-        fDist = d;
-        fLayer = l;
-        fName = faultName(l.feature.properties);
-      }
-    }
-
-  } catch(err){
-    console.warn("Fault error:", err);
-  }
-
-});
-// ================= GEOLOGIC STABILITY =================
-layers["GeoStability"]?.eachLayer(l=>{
-
-  if(turf.booleanPointInPolygon(point, l.toGeoJSON())){
-    geoClass = (l.feature.properties.geo_class || "Unknown").toUpperCase();
-  }
-
-});
-  var origin=[point.geometry.coordinates[1],point.geometry.coordinates[0]];
-
-  function format(d){
-    return d < 1 ? (d*1000).toFixed(0)+" m" : d.toFixed(2)+" km";
-  }
-
-  function drawFeature(layer,color,name,dist){
-
-  var geo = layer.toGeoJSON();
-
-  var h = L.geoJSON(geo,{
-    color:color,
-    weight:3,
-    fillOpacity:0.2
-  }).addTo(highlightLayer);
-
-  // 🔥 if inside → no line
-  if(dist === 0){
-    h.bindPopup("<b>"+name+"</b><br>Inside area");
-    return;
-  }
-
-  var nearestPoint = null;
-  var minDist = Infinity;
-
-  try {
-
-    var coordsArray = [];
-
-    if(geo.geometry.type === "Polygon"){
-      coordsArray = [geo.geometry.coordinates];
-    }
-    else if(geo.geometry.type === "MultiPolygon"){
-      coordsArray = geo.geometry.coordinates;
-    }
-    else {
-      return;
-    }
-
-    // 🔥 find nearest point on ALL boundaries
-    coordsArray.forEach(polygon=>{
-      polygon.forEach(ring=>{
-
-        var line = turf.lineString(ring);
-
-        var snapped = turf.nearestPointOnLine(line, point);
-
-// 🔥 compute distance manually (reliable)
-var d = turf.distance(point, snapped, {units:'kilometers'});
-
-if(d < minDist){
-  minDist = d;
-  nearestPoint = snapped;
-}
-
-      });
-    });
-
-  } catch(err){
-    console.warn("Draw error:", err);
-    return;
-  }
-
-  if(!nearestPoint) return;
-
-  var coords = nearestPoint.geometry.coordinates;
-  var dest = [coords[1], coords[0]];
-
-  // 🔥 DRAW LINE TO TRUE NEAREST POINT
-  lines.push(
-    L.polyline([origin, dest], {
-      color: color
-    }).addTo(map)
-  );
-
-  // 🔥 MARK CONTACT POINT
-  L.circleMarker(dest,{
-    radius:5,
-    color:color,
-    fillColor:"#fff",
-    fillOpacity:1,
-    weight:2
-  }).addTo(highlightLayer);
-
-  h.bindPopup(
-    "<b>"+name+"</b><br>"+
-    format(dist)+" from boundary"
-  );
-}
-// 🔥 DRAW RESULTS (THIS IS MISSING)
-if(kLayer){ drawFeature(kLayer,"lime",kName,kDist); }
-if(pLayer){ drawFeature(pLayer,"red",pName,pDist); }
-
-// 🔥 FAULT LINE DRAW (RESTORED)
-if(fLayer){
-
-  var geo = fLayer.toGeoJSON();
-
-  try {
-
-    var snapped = turf.nearestPointOnLine(geo, point);
-    var coords = snapped.geometry.coordinates;
-
-    var dest = [coords[1], coords[0]];
-
-    // 🔥 draw dashed line to nearest fault
-    lines.push(
-      L.polyline(
-        [origin, dest],
-        {color:"purple", dashArray:"6"}
-      ).addTo(map)
-    );
-
-    // 🔥 mark contact point
-    L.circleMarker(dest,{
-      radius:6,
-      color:"purple",
-      fillColor:"yellow",
-      fillOpacity:1,
-      weight:2
-    }).addTo(highlightLayer)
-    .bindPopup(
-      "<b>"+fName+"</b><br>"+
-      format(fDist)+" from selected point"
-    );
-
-  } catch(err){
-    console.warn("Fault draw error:", err);
-  }
-}
-  highlightLayer.addTo(map);
-
- document.getElementById("result").innerHTML =
-  "<b>Barangay:</b> "+brgy+"<br>"+
-  "<b>Municipality:</b> "+mun+"<br>"+
-  "<b>Province:</b> "+prov+"<br>"+
-  "<b>Region:</b> "+reg+"<br><br>"+
-"<b>Geologic Stability:</b> "+geoClass+"<br>"+ // 🔥 ADD THIS
-  "<b>KBA:</b> "+format(kDist)+" from "+kName+"<br>"+
-  "<b>Protected Area:</b> "+format(pDist)+" from "+pName+"<br>"+
-  "<b>Fault Line:</b> "+format(fDist)+" from "+fName+
-"<br><br><b>Land Surface Temp:</b> " + lstValue +
-"<br><b>Rainfall:</b> " + rainfallValue +
-"<br><b>Slope:</b> " + slopeValue;
-}
-
-function openAnalytics(){
-  window.open("https://vercel.com/dashboard", "_blank");
-}
-
-function runLatLng(){
-
-  var lat = parseFloat(document.getElementById("latInput").value);
-  var lng = parseFloat(document.getElementById("lngInput").value);
-
-  // 🔴 basic validation
-  if(isNaN(lat) || isNaN(lng)){
-    alert("Please enter valid latitude and longitude.");
-    return;
-  }
-
-  // 🔴 remove old marker
-  if(marker) map.removeLayer(marker);
-
-  // 🔴 add new marker
-  marker = L.marker([lat, lng]).addTo(map);
-
-  // 🔴 zoom to point
-  map.setView([lat, lng], 14);
-
-  // 🔴 run existing assessment
-  assess(turf.point([lng, lat]));
 }
 
 </script>
